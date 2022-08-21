@@ -5,7 +5,10 @@ KafkaServer {
    password="admin-secret"
    user_admin="admin-secret"
    user_producer="producer-secret"
-   user_consumer="consumer-secret";
+   user_consumer="consumer-secret"
+   user_exporter="exporter-secret"
+   user_connect="connect-secret"
+   user_kowl="kowl-secret";
 };
 // Client config used to connect to Kafka
 KafkaClient {

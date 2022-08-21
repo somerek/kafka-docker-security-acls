@@ -28,7 +28,7 @@ services:
       KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
       KAFKA_INTER_BROKER_LISTENER_NAME: EXTERNAL
       KAFKA_LISTENERS: "EXTERNAL://kafka:9092,INTERNAL://localhost:9093"
-      KAFKA_ADVERTISED_LISTENERS: "EXTERNAL://kafka:9092,INTERNAL://localhost:9093"
+      KAFKA_ADVERTISED_LISTENERS: "EXTERNAL://192.168.1.14:9092,INTERNAL://localhost:9093"
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: "EXTERNAL:SASL_PLAINTEXT,INTERNAL:SASL_PLAINTEXT"
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
@@ -61,3 +61,159 @@ services:
       KAFKA_CONFLUENT_LICENSE_TOPIC_REPLICATION_FACTOR: 1
     volumes:
       - ./security:/opt/security
+      - ./client-properties:/opt/client-properties
+  kowl:
+    image: quay.io/cloudhut/kowl
+    restart: on-failure
+    hostname: kowl
+    volumes:
+    - ./config.yaml:/etc/kowl/config.yaml
+    ports:
+    - "8080:8080"
+    environment:
+      KAFKA_SASL_ENABLED: "true"
+      KAFKA_SASL_USERNAME: kowl
+      KAFKA_SASL_PASSWORD: kowl-secret
+    entrypoint: ./kowl --config.filepath=/etc/kowl/config.yaml
+    depends_on:
+      - kafka
+
+  kafka-connect-01:
+    image: confluentinc/cp-kafka-connect:5.4.0
+    #image: somerek/myconnect:1.0
+    container_name: kafka-connect-01
+    depends_on:
+      - kafka
+    ports:
+      - 8083:8083
+    environment:
+      CONNECT_LOG4J_APPENDER_STDOUT_LAYOUT_CONVERSIONPATTERN: "[%d] %p %X{connector.context}%m (%c:%L)%n"
+      CONNECT_BOOTSTRAP_SERVERS: "kafka:9092"
+      CONNECT_SECURITY_PROTOCOL: SASL_PLAINTEXT      
+      CONNECT_SASL_MECHANISM:    PLAIN
+      CONNECT_PRODUCER_SASL_MECHANISM:  PLAIN
+      CONNECT_PRODUCER_SECURITY_PROTOCOL: SASL_PLAINTEXT
+      CONNECT_SASL_JAAS_CONFIG: org.apache.kafka.common.security.plain.PlainLoginModule required username=connect password=connect-secret;
+      CONNECT_PRODUCER_SASL_JAAS_CONFIG: org.apache.kafka.common.security.plain.PlainLoginModule required username=connect password=connect-secret;
+      CONNECT_REST_PORT: 8083
+      CONNECT_REST_ADVERTISED_HOST_NAME: "kafka-connect-01"
+      CONNECT_GROUP_ID: compose-connect-group
+      CONNECT_CONFIG_STORAGE_TOPIC: docker-connect-configs
+      CONNECT_OFFSET_STORAGE_TOPIC: docker-connect-offsets
+      CONNECT_STATUS_STORAGE_TOPIC: docker-connect-status
+      CONNECT_KEY_CONVERTER: org.apache.kafka.connect.storage.StringConverter
+      #CONNECT_KEY_CONVERTER: io.confluent.connect.avro.AvroConverter
+      #CONNECT_KEY_CONVERTER_SCHEMA_REGISTRY_URL: 'http://schema-registry:8081'
+      CONNECT_VALUE_CONVERTER: org.apache.kafka.connect.json.JsonConverter
+      CONNECT_VALUE_CONVERTER_SCHEMAS_ENABLE: false
+      #CONNECT_VALUE_CONVERTER: io.confluent.connect.avro.AvroConverter
+      #CONNECT_VALUE_CONVERTER_SCHEMA_REGISTRY_URL: 'http://schema-registry:8081'
+      CONNECT_LOG4J_ROOT_LOGLEVEL: "INFO"
+      CONNECT_LOG4J_LOGGERS: "org.apache.kafka.connect.runtime.rest=WARN,org.reflections=ERROR"
+      CONNECT_CONFIG_STORAGE_REPLICATION_FACTOR: "1"
+      CONNECT_OFFSET_STORAGE_REPLICATION_FACTOR: "1"
+      CONNECT_STATUS_STORAGE_REPLICATION_FACTOR: "1"
+      CONNECT_PLUGIN_PATH: '/usr/share/java'
+    volumes:
+      - db-leach:/db-leach/
+    #   - /my/local/folder/with/jdbc-driver.jar:/usr/share/java/kafka-connect-jdbc/jars/
+    command: 
+      - /bin/bash
+      - -c 
+      - |
+        # JDBC Drivers
+        # ------------
+        # MS SQL
+        #cd /usr/share/java/kafka-connect-jdbc/
+        #echo "Installing connector plugins"
+        # ------ hack to workaround absence of confluent-hub client
+        # mkdir -p /usr/share/confluent-hub-components/
+        # confluent-hub install --no-prompt --component-dir /usr/share/confluent-hub-components/ debezium/debezium-connector-sqlserver:1.2.2
+        curl https://d1i4a15mxbxib1.cloudfront.net/api/plugins/debezium/debezium-connector-sqlserver/versions/1.2.2/debezium-debezium-connector-sqlserver-1.2.2.zip -o /tmp/kafka-connect-mssql.zip
+        apt update
+        apt install unzip
+        yum install -y unzip
+        unzip /tmp/kafka-connect-mssql.zip -d /usr/share/java/
+        # See https://mvnrepository.com/artifact/com.microsoft.sqlserver/mssql-jdbc/7.0.0.jre8
+        #curl https://repo1.maven.org/maven2/com/microsoft/sqlserver/mssql-jdbc/7.0.0.jre8/mssql-jdbc-7.0.0.jre8.jar --output mssql-jdbc-7.0.0.jre8.jar
+        #curl https://repo1.maven.org/maven2/com/microsoft/sqlserver/mssql-jdbc/10.2.1.jre8/mssql-jdbc-10.2.1.jre8.jar --output mssql-jdbc-10.2.1.jre8.jar
+        #cp /1/mssql-jdbc-10.2.1.jre8.jar ./mssql-jdbc-10.2.1.jre8.jar
+        # Now launch Kafka Connect
+        sleep infinity &
+        /etc/confluent/docker/run 
+
+  mssql:
+    # *-----------------------------*
+    # To connect to the DB: 
+    #   docker exec -it mssql bash -c '/opt/mssql-tools/bin/sqlcmd -l 30 -S localhost -U sa -P $SA_PASSWORD'
+    # *-----------------------------*
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    #microsoft/mssql-server-linux:2017-CU9-GDR2
+    container_name: mssql
+    ports: 
+      - 1433:1433
+    environment: 
+      - SA_PASSWORD=Admin123
+      - ACCEPT_EULA=Y
+      - MSSQL_PID=Standard
+      - MSSQL_AGENT_ENABLED=true
+    volumes:
+     - ./data/mssql:/scripts/
+    command:
+      - /bin/bash
+      - -c 
+      - |
+        # Launch MSSQL and send to background
+        /opt/mssql/bin/sqlservr &
+        # Wait for the SQL Server Agent to be available
+        # We're assuming here that if the agent is available then MS SQL is too.
+        echo "Waiting for the SQL Server Agent to be available ⏳"
+        # Wait for it to begin start up first so that the log file is there
+        while [ ! -f /var/opt/mssql/log/sqlagent.out ]
+        do
+          sleep 2 
+        done
+        while : 
+          do 
+            # sqlagent.out is a binary file, sed then removes all non-ascii characters so that grep can correctly match
+            # Thanks to this snippet for helping me out here https://github.com/bitwarden/server/pull/302/files#diff-dcd8a73331aba627440c247763086b99R181-R182
+            sed 's/[^a-zA-Z ]//g' /var/opt/mssql/log/sqlagent.out | \
+              tr '\n' ' ' |\
+              grep -iq "Waiting for SQL Server to start .* SQLServerAgent service successfully started"
+            sqlagentstatus=$$?
+            echo -e $$(date) " sqlagentstatus grep result: " $$sqlagentstatus " (waiting for 0)" 
+            if [ $$sqlagentstatus -eq 0 ] ; then
+              break
+            fi 
+            sleep 5 
+          done 
+        # Run every script in /scripts
+        # TODO set a flag so that this is only done once on creation, 
+        #      and not every time the container runs
+        for foo in /scripts/*.sql
+          do /opt/mssql-tools/bin/sqlcmd -U sa -P $$SA_PASSWORD -l 30 -e -i $$foo
+        done
+        # So that the container doesn't shut down, sleep this thread
+        sleep infinity
+  kafka-connect-ui:
+    image: landoop/kafka-connect-ui:0.9.7
+    restart: on-failure
+    hostname: kafka-connect-ui
+    # kafka-connect-ui binds to port 8000, but we are going to expose it on our local
+    # machine on port 8002.
+    ports:
+      - "8002:8000"
+    network_mode: bridge
+    environment:
+      # Required. Instructs the UI where it can find Kafka Connect.
+      CONNECT_URL: "http://192.168.1.14:8083/"
+      # This instructs the docker image to use Caddy to proxy traffic to kafka-connect-ui.
+      #PROXY: "false"
+    # kafka-connect-ui relies upon Kafka Connect.
+    # This will instruct docker to wait until those services are up
+    # before attempting to start kafka-connect-ui.
+    depends_on:
+      - kafka-connect-01
+
+volumes:
+    db-leach: {}
