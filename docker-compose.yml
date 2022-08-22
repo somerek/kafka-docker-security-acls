@@ -81,6 +81,7 @@ services:
   kafka-connect-01:
     image: confluentinc/cp-kafka-connect:5.4.0
     #image: somerek/myconnect:1.0
+    hostname: kafka-connect-01
     container_name: kafka-connect-01
     depends_on:
       - kafka
